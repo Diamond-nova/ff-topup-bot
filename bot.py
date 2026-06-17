@@ -5,6 +5,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.enums import ChatType
+from aiogram.exceptions import TelegramNetworkError
 
 from config import BOT_TOKEN, MODERATOR_GROUP_ID, PAYMENT_PHONE, DB_PATH
 from database import Database
@@ -13,6 +14,7 @@ from keyboards import get_main_keyboard, get_admin_keyboard, get_cancel_keyboard
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Инициализация бота, диспетчера и БД
 bot = Bot(token=BOT_TOKEN)
@@ -51,7 +53,6 @@ async def process_id(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("diamond_"), OrderStates.waiting_for_amount)
 async def process_amount_button(callback: types.CallbackQuery, state: FSMContext):
-    # Получаем текст кнопки для сохранения в БД
     amount_text = ""
     for row in callback.message.reply_markup.inline_keyboard:
         for button in row:
@@ -75,7 +76,6 @@ async def process_receipt(message: types.Message, state: FSMContext):
     photo_id = message.photo[-1].file_id
     data = await state.get_data()
     
-    # Сохранение в БД
     order_id = db.add_order(
         user_id=message.from_user.id,
         username=message.from_user.username or "Unknown",
@@ -87,7 +87,6 @@ async def process_receipt(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer(f"✅ Ваш заказ №{order_id} принят! Ожидайте подтверждения модератором.")
     
-    # Уведомление модераторов
     admin_text = (
         f"🆕 **Новый заказ №{order_id}**\n"
         f"👤 Пользователь: @{message.from_user.username} (ID: {message.from_user.id})\n"
@@ -158,7 +157,16 @@ async def process_rejection_reason(message: types.Message, state: FSMContext):
     await state.clear()
 
 async def main():
-    await dp.start_polling(bot)
+    while True:
+        try:
+            logger.info("Запуск бота...")
+            await dp.start_polling(bot)
+        except TelegramNetworkError:
+            logger.error("Ошибка сети! Повторная попытка через 5 секунд...")
+            await asyncio.sleep(5)
+        except Exception as e:
+            logger.error(f"Произошла ошибка: {e}. Перезапуск через 5 секунд...")
+            await asyncio.sleep(5)
 
 if __name__ == "__main__":
     asyncio.run(main())
